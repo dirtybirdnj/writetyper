@@ -44,3 +44,7 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+
+# Hershey fonts (user-added)
+resources/fonts/*.jhf
+resources/fonts/*.svg
