@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const https = require('https');
@@ -6,6 +6,7 @@ const { exec } = require('child_process');
 const os = require('os');
 
 let mainWindow;
+let sampleFiles = []; // Cache for sample files
 const WRITETYPER_DIR = path.join(os.homedir(), 'writetyper');
 const FONTS_DIR = path.join(WRITETYPER_DIR, 'hershey-fonts');
 
@@ -71,8 +72,155 @@ function createWindow() {
   });
 }
 
+// Load sample files for menu
+function loadSampleFiles() {
+  try {
+    const samplesDir = path.join(__dirname, '../samples');
+    if (!fs.existsSync(samplesDir)) {
+      return [];
+    }
+
+    const files = fs.readdirSync(samplesDir);
+    const imageFiles = files.filter(f =>
+      /\.(png|jpg|jpeg|gif|bmp|webp|tiff)$/i.test(f)
+    );
+
+    return imageFiles.map(f => ({
+      name: f,
+      path: path.join(samplesDir, f)
+    }));
+  } catch (error) {
+    console.error('Error loading sample files:', error);
+    return [];
+  }
+}
+
+// Build application menu
+function buildMenu() {
+  sampleFiles = loadSampleFiles();
+
+  const isMac = process.platform === 'darwin';
+
+  const template = [
+    // App menu (macOS only)
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' }
+      ]
+    }] : []),
+    // File menu
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Export SVG',
+          accelerator: 'CmdOrCtrl+S',
+          click: () => mainWindow?.webContents.send('menu:export-svg')
+        },
+        {
+          label: 'Export PNG',
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: () => mainWindow?.webContents.send('menu:export-png')
+        },
+        {
+          label: 'Export JPG',
+          accelerator: 'CmdOrCtrl+Shift+J',
+          click: () => mainWindow?.webContents.send('menu:export-jpg')
+        },
+        { type: 'separator' },
+        isMac ? { role: 'close' } : { role: 'quit' }
+      ]
+    },
+    // Edit menu
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    // Tools menu
+    {
+      label: 'Tools',
+      submenu: [
+        {
+          label: 'Upload Image (OCR)',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => mainWindow?.webContents.send('menu:upload-image')
+        },
+        {
+          label: 'Load Samples',
+          submenu: sampleFiles.length > 0 ? sampleFiles.map(sample => ({
+            label: sample.name,
+            click: () => mainWindow?.webContents.send('menu:load-sample', sample.path)
+          })) : [{ label: 'No samples available', enabled: false }]
+        },
+        { type: 'separator' },
+        {
+          label: 'Glyph Template Generator',
+          accelerator: 'CmdOrCtrl+G',
+          click: () => mainWindow?.webContents.send('menu:glyph-template')
+        },
+        { type: 'separator' },
+        {
+          label: 'Font Menu',
+          accelerator: 'CmdOrCtrl+F',
+          click: () => mainWindow?.webContents.send('menu:font-menu')
+        }
+      ]
+    },
+    // View menu
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    // Window menu
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(isMac ? [
+          { type: 'separator' },
+          { role: 'front' }
+        ] : [
+          { role: 'close' }
+        ])
+      ]
+    }
+  ];
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+}
+
 app.whenReady().then(async () => {
   await setupHersheyFonts();
+  buildMenu();
   createWindow();
 });
 
@@ -300,8 +448,46 @@ ipcMain.handle('fonts:getAvailable', async () => {
       });
     }
 
-    // Sort with best fonts first (Relief fonts at top, then Hershey)
-    const priority = ['ReliefSingleLineSVG-Regular', 'cursive', 'scripts', 'futural', 'romans'];
+    // Add EMS single-line fonts
+    const emsDir = path.join(__dirname, '../resources/fonts/ems');
+    if (fs.existsSync(emsDir)) {
+      const emsFiles = fs.readdirSync(emsDir);
+      emsFiles.forEach(file => {
+        if (file.endsWith('.svg')) {
+          const fontPath = path.join(emsDir, file);
+          const name = path.basename(file, '.svg');
+          fonts.push({
+            name: name,
+            displayName: name.replace('EMS', 'EMS '),
+            path: fontPath,
+            type: 'svg'
+          });
+        }
+      });
+    }
+
+    // Add Hershey SVG fonts
+    const hersheySvgDir = path.join(__dirname, '../resources/fonts/hershey-svg');
+    if (fs.existsSync(hersheySvgDir)) {
+      const hersheyFiles = fs.readdirSync(hersheySvgDir);
+      hersheyFiles.forEach(file => {
+        if (file.endsWith('.svg')) {
+          const fontPath = path.join(hersheySvgDir, file);
+          const name = path.basename(file, '.svg');
+          // Format: HersheyGothEnglish -> Hershey Goth English
+          const displayName = name.replace(/([A-Z])/g, ' $1').trim();
+          fonts.push({
+            name: name,
+            displayName: displayName,
+            path: fontPath,
+            type: 'svg'
+          });
+        }
+      });
+    }
+
+    // Sort with best fonts first (Cursive first for handwriting, then others)
+    const priority = ['cursive', 'scripts', 'ReliefSingleLineSVG-Regular', 'futural', 'romans'];
     fonts.sort((a, b) => {
       const aIndex = priority.indexOf(a.name);
       const bIndex = priority.indexOf(b.name);
@@ -636,6 +822,116 @@ ipcMain.handle('export:json', async (event, pathData) => {
   }
 });
 
+// Image upload handler
+ipcMain.handle('image:select', async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile'],
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tiff'] }
+      ]
+    });
+
+    if (!result.canceled && result.filePaths.length > 0) {
+      const imagePath = result.filePaths[0];
+      // Read image as base64 for Tesseract.js
+      const imageBuffer = fs.readFileSync(imagePath);
+      const base64 = imageBuffer.toString('base64');
+      const ext = path.extname(imagePath).toLowerCase().slice(1);
+      const mimeType = ext === 'jpg' ? 'jpeg' : ext;
+
+      return {
+        success: true,
+        data: `data:image/${mimeType};base64,${base64}`,
+        path: imagePath
+      };
+    }
+    return { success: false, error: 'No image selected' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Get sample images from samples directory
+ipcMain.handle('samples:list', async () => {
+  try {
+    const samplesDir = path.join(__dirname, '../samples');
+    if (!fs.existsSync(samplesDir)) {
+      return { success: true, samples: [] };
+    }
+
+    const files = fs.readdirSync(samplesDir);
+    const imageFiles = files.filter(f =>
+      /\.(png|jpg|jpeg|gif|bmp|webp|tiff)$/i.test(f)
+    );
+
+    const samples = imageFiles.map(f => ({
+      name: f,
+      path: path.join(samplesDir, f)
+    }));
+
+    return { success: true, samples };
+  } catch (error) {
+    return { success: false, error: error.message, samples: [] };
+  }
+});
+
+// Load a specific sample image
+ipcMain.handle('samples:load', async (event, samplePath) => {
+  try {
+    const imageBuffer = fs.readFileSync(samplePath);
+    const base64 = imageBuffer.toString('base64');
+    const ext = path.extname(samplePath).toLowerCase().slice(1);
+    const mimeType = ext === 'jpg' ? 'jpeg' : ext;
+
+    return {
+      success: true,
+      data: `data:image/${mimeType};base64,${base64}`,
+      path: samplePath
+    };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// PNG export handler
+ipcMain.handle('export:png', async (event, dataUrl) => {
+  try {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: 'writetyper-output.png',
+      filters: [{ name: 'PNG Image', extensions: ['png'] }]
+    });
+
+    if (!result.canceled) {
+      const base64Data = dataUrl.replace(/^data:image\/png;base64,/, '');
+      fs.writeFileSync(result.filePath, Buffer.from(base64Data, 'base64'));
+      return { success: true, path: result.filePath };
+    }
+    return { success: false, error: 'Export cancelled' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
+// JPG export handler
+ipcMain.handle('export:jpg', async (event, dataUrl) => {
+  try {
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: 'writetyper-output.jpg',
+      filters: [{ name: 'JPEG Image', extensions: ['jpg', 'jpeg'] }]
+    });
+
+    if (!result.canceled) {
+      const base64Data = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+      fs.writeFileSync(result.filePath, Buffer.from(base64Data, 'base64'));
+      return { success: true, path: result.filePath };
+    }
+    return { success: false, error: 'Export cancelled' };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 function generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, lineCount = 1, lineHeight = 0, strokeWidth = 2) {
   const padding = 20;
 
@@ -662,16 +958,22 @@ function generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, 
 
   // Use page dimensions if provided, otherwise fit to content
   let viewBoxWidth, viewBoxHeight;
+  let widthInches, heightInches;
   if (pageDimensions) {
     viewBoxWidth = pageDimensions.widthPx;
     viewBoxHeight = pageDimensions.heightPx;
+    widthInches = pageDimensions.width;
+    heightInches = pageDimensions.height;
   } else {
     viewBoxWidth = totalWidth + (padding * 2);
     viewBoxHeight = height + (padding * 2);
+    widthInches = viewBoxWidth / 96;
+    heightInches = viewBoxHeight / 96;
   }
 
+  // Use inches for width/height so Cricut/plotters interpret size correctly
   let svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${widthInches}in" height="${heightInches}in">
   <style>
     path { fill: none; stroke: black; stroke-width: ${strokeWidth}; stroke-linecap: round; stroke-linejoin: round; }
   </style>
@@ -691,7 +993,7 @@ function generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, 
   svg += `  </g>
 </svg>`;
 
-  console.log(`SVG Font: width=${viewBoxWidth.toFixed(2)} height=${viewBoxHeight.toFixed(2)} scale=${scale}`);
+  console.log(`SVG Font: ${widthInches}in x ${heightInches}in`);
   return svg;
 }
 
@@ -727,20 +1029,26 @@ function generateHersheySVG(paths, fontSize, totalWidth, pageDimensions, lineCou
 
   // Use page dimensions if provided, otherwise fit to content
   let viewBoxX, viewBoxY, viewBoxWidth, viewBoxHeight;
+  let widthInches, heightInches;
   if (pageDimensions) {
     viewBoxX = 0;
     viewBoxY = 0;
     viewBoxWidth = pageDimensions.widthPx;
     viewBoxHeight = pageDimensions.heightPx;
+    widthInches = pageDimensions.width;
+    heightInches = pageDimensions.height;
   } else {
     viewBoxX = minX - padding;
     viewBoxY = minY - padding;
     viewBoxWidth = (maxX - minX) + (padding * 2);
     viewBoxHeight = (maxY - minY) + (padding * 2);
+    widthInches = viewBoxWidth / 96;
+    heightInches = viewBoxHeight / 96;
   }
 
+  // Use inches for width/height so Cricut/plotters interpret size correctly
   let svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}" width="${viewBoxWidth}" height="${viewBoxHeight}">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}" width="${widthInches}in" height="${heightInches}in">
   <style>
     path { fill: none; stroke: black; stroke-width: ${strokeWidth}; stroke-linecap: round; stroke-linejoin: round; }
   </style>
@@ -754,10 +1062,7 @@ function generateHersheySVG(paths, fontSize, totalWidth, pageDimensions, lineCou
   svg += `  </g>
 </svg>`;
 
-  console.log(`SVG viewBox: ${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}`);
-  console.log(`Bounds: minX=${minX} maxX=${maxX} minY=${minY} maxY=${maxY}`);
-  console.log(`First path sample:`, paths[0]?.pathData.substring(0, 80));
-  console.log(`First char position: x=${paths[0]?.x} y=${paths[0]?.y}`);
+  console.log(`SVG: ${widthInches}in x ${heightInches}in (${viewBoxWidth}x${viewBoxHeight}px)`);
   return svg;
 }
 
@@ -766,16 +1071,21 @@ function generateSVG(paths, fontSize, totalWidth, pageDimensions, lineCount = 1,
 
   // Use page dimensions if provided, otherwise fit to content
   let width, height;
+  let widthInches, heightInches;
   if (pageDimensions) {
     width = pageDimensions.widthPx;
     height = pageDimensions.heightPx;
+    widthInches = pageDimensions.width;
+    heightInches = pageDimensions.height;
   } else {
     width = totalWidth + padding * 2;
     height = (lineCount * lineHeight || fontSize * 1.5) + padding * 2;
+    widthInches = width / 96;
+    heightInches = height / 96;
   }
 
   let svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${widthInches}in" height="${heightInches}in">
   <style>
     path { fill: none; stroke: black; stroke-width: ${strokeWidth}; stroke-linecap: round; stroke-linejoin: round; }
   </style>
