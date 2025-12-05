@@ -385,11 +385,13 @@ input[type="range"] {
       #f5f5f5 20px
     );
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
-  overflow: auto;
-  padding: 3rem;
+  overflow: hidden;
+  padding: 1.5rem;
   border-bottom: 1px solid #e0e0e0;
+  /* Constrain height so SVG can fit within */
+  min-height: 0;
 }
 
 .text-area {
@@ -431,7 +433,11 @@ input[type="range"] {
 
 .svg-container {
   position: relative;
-  display: inline-block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
 }
 
 .svg-container svg {
@@ -439,16 +445,26 @@ input[type="range"] {
   border: 2px solid #667eea;
   background: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  /* Fit entire page in viewport - text appears smaller on larger pages */
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
 }
 
 .svg-container::before {
   content: attr(data-page-size);
   position: absolute;
-  top: -24px;
-  left: 0;
+  top: 0.5rem;
+  left: 0.5rem;
   font-size: 0.75rem;
   color: #667eea;
   font-weight: 600;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  z-index: 10;
 }
 
 .font-type-selector {
@@ -505,6 +521,78 @@ input[type="range"] {
 .page-size-grid .preset {
   font-size: 0.7rem;
   padding: 0.4rem;
+}
+
+/* Margin controls in sidebar */
+.margin-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.margin-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.margin-label {
+  width: 16px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #666;
+  text-align: center;
+}
+
+.margin-btn {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: white;
+  color: #667eea;
+  font-size: 0.9rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.margin-btn:hover {
+  background: #667eea;
+  color: white;
+  border-color: #667eea;
+}
+
+.margin-input {
+  width: 50px;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background: white;
+  color: #333;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.margin-input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+}
+
+/* Remove number input spinner arrows for margin input */
+.margin-input::-webkit-inner-spin-button,
+.margin-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.margin-input[type=number] {
+  -moz-appearance: textfield;
 }
 
 .status-bar {

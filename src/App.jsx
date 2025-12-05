@@ -17,6 +17,7 @@ export default function App() {
   const [strokeWidth, setStrokeWidth] = useState(2); // Stroke width for rendering
   const [statusMessage, setStatusMessage] = useState('Ready'); // Status bar message
   const [pageRotated, setPageRotated] = useState(true); // Page rotation state - default to landscape
+  const [pageMargins, setPageMargins] = useState({ top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 }); // Page margins in inches
   const [ocrProgress, setOcrProgress] = useState(0); // OCR progress 0-100
   const [isOcrRunning, setIsOcrRunning] = useState(false); // OCR in progress
   const [showFontTest, setShowFontTest] = useState(false); // Font test modal
@@ -82,7 +83,24 @@ export default function App() {
     window.api.onMenuExportSVG(() => handleExportSVG());
     window.api.onMenuExportPNG(() => handleExportPNG());
     window.api.onMenuExportJPG(() => handleExportJPG());
+    window.api.onMenuExportFontSamples(() => handleExportFontSamples());
   }, []);
+
+  const handleExportFontSamples = async () => {
+    try {
+      showStatus('Generating font samples...', 0);
+      const result = await window.api.exportFontSamples();
+      if (result.success) {
+        showStatus(`✓ Exported ${result.fontCount} font samples to ${result.path}`);
+      } else if (result.error !== 'Export cancelled') {
+        showStatus(`✗ Export failed: ${result.error}`, 5000);
+      } else {
+        showStatus('Ready');
+      }
+    } catch (err) {
+      showStatus(`✗ Error: ${err.message}`, 5000);
+    }
+  };
 
   const handleSelectFont = async (path) => {
     try {
@@ -120,7 +138,8 @@ export default function App() {
         pageSize,
         charSpacing,
         strokeWidth,
-        pageRotated
+        pageRotated,
+        pageMargins
       });
 
       if (result.success) {
@@ -513,7 +532,7 @@ export default function App() {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [text, fontSize, fontPath, fontData, pageSize, charSpacing, strokeWidth, pageRotated]);
+  }, [text, fontSize, fontPath, fontData, pageSize, charSpacing, strokeWidth, pageRotated, pageMargins]);
 
 
   return (
@@ -695,6 +714,43 @@ export default function App() {
                 >
                   {size.label}
                 </button>
+              ))}
+            </div>
+          </section>
+
+          <section className="section">
+            <h3>Margins (in)</h3>
+            <div className="margin-grid">
+              {['top', 'right', 'bottom', 'left'].map(side => (
+                <div key={side} className="margin-row">
+                  <span className="margin-label">{side.charAt(0).toUpperCase()}</span>
+                  <button
+                    onClick={() => setPageMargins(m => ({ ...m, [side]: Math.max(0, m[side] - 0.25) }))}
+                    className="margin-btn"
+                  >
+                    −
+                  </button>
+                  <input
+                    type="number"
+                    value={pageMargins[side].toFixed(2)}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      if (!isNaN(val) && val >= 0 && val <= 3.0) {
+                        setPageMargins(m => ({ ...m, [side]: val }));
+                      }
+                    }}
+                    step="0.25"
+                    min="0"
+                    max="3.0"
+                    className="margin-input"
+                  />
+                  <button
+                    onClick={() => setPageMargins(m => ({ ...m, [side]: Math.min(3.0, m[side] + 0.25) }))}
+                    className="margin-btn"
+                  >
+                    +
+                  </button>
+                </div>
               ))}
             </div>
           </section>

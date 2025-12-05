@@ -137,6 +137,12 @@ function buildMenu() {
           click: () => mainWindow?.webContents.send('menu:export-jpg')
         },
         { type: 'separator' },
+        {
+          label: 'Export Font Samples',
+          accelerator: 'CmdOrCtrl+Shift+F',
+          click: () => mainWindow?.webContents.send('menu:export-font-samples')
+        },
+        { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }
       ]
     },
@@ -268,14 +274,26 @@ function parseSVGFont(content) {
   const fontDefaultWidth = content.match(/<font[^>]*horiz-adv-x="(\d+)"/);
   const defaultWidth = fontDefaultWidth ? parseInt(fontDefaultWidth[1]) : 500;
 
-  // Parse all glyph elements
-  const glyphRegex = /<glyph[^>]*unicode="([^"]*)"[^>]*(?:horiz-adv-x="(\d+)")?[^>]*d="([^"]*)"/g;
-  let match;
+  // Parse all glyph elements - extract unicode, horiz-adv-x, and path data
+  // Use separate regex patterns for more reliable parsing
+  const glyphRegex = /<glyph[^>]*>/g;
+  let glyphMatch;
 
-  while ((match = glyphRegex.exec(content)) !== null) {
-    let unicode = match[1];
-    const horizAdvX = match[2] ? parseInt(match[2]) : defaultWidth;
-    const pathData = match[3];
+  while ((glyphMatch = glyphRegex.exec(content)) !== null) {
+    const glyphTag = glyphMatch[0];
+
+    // Extract unicode
+    const unicodeMatch = glyphTag.match(/unicode="([^"]*)"/);
+    if (!unicodeMatch) continue;
+    let unicode = unicodeMatch[1];
+
+    // Extract horiz-adv-x (optional, supports decimals)
+    const advMatch = glyphTag.match(/horiz-adv-x="([\d.]+)"/);
+    const horizAdvX = advMatch ? parseFloat(advMatch[1]) : defaultWidth;
+
+    // Extract path data
+    const pathMatch = glyphTag.match(/\sd="([^"]*)"/);
+    const pathData = pathMatch ? pathMatch[1] : '';
 
     // Handle HTML entities like &#xc1; (Á)
     if (unicode.startsWith('&#x')) {
@@ -603,7 +621,7 @@ ipcMain.handle('font:load', async (event, fontPath) => {
   }
 });
 
-ipcMain.handle('paths:generate', async (event, { text, fontPath, fontSize, fontData, pageSize, charSpacing = 1.0, strokeWidth = 2, pageRotated = false }) => {
+ipcMain.handle('paths:generate', async (event, { text, fontPath, fontSize, fontData, pageSize, charSpacing = 1.0, strokeWidth = 2, pageRotated = false, pageMargins = { top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 } }) => {
   try {
     const ext = path.extname(fontPath).toLowerCase();
 
@@ -645,7 +663,7 @@ ipcMain.handle('paths:generate', async (event, { text, fontPath, fontSize, fontD
         maxWidth = Math.max(maxWidth, x);
       });
 
-      const svg = generateHersheySVG(paths, fontSize, maxWidth, pageDimensions, lines.length, lineHeight, strokeWidth);
+      const svg = generateHersheySVG(paths, fontSize, maxWidth, pageDimensions, lines.length, lineHeight, strokeWidth, pageMargins);
 
       return {
         success: true,
@@ -717,7 +735,7 @@ ipcMain.handle('paths:generate', async (event, { text, fontPath, fontSize, fontD
       });
 
       console.log(`Total paths generated: ${paths.length}`);
-      const svg = generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, lines.length, lineHeight, strokeWidth);
+      const svg = generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, lines.length, lineHeight, strokeWidth, pageMargins);
 
       return {
         success: true,
@@ -765,7 +783,7 @@ ipcMain.handle('paths:generate', async (event, { text, fontPath, fontSize, fontD
       maxWidth = Math.max(maxWidth, x);
     });
 
-    const svg = generateSVG(paths, fontSize, maxWidth, pageDimensions, lines.length, lineHeight, strokeWidth);
+    const svg = generateSVG(paths, fontSize, maxWidth, pageDimensions, lines.length, lineHeight, strokeWidth, pageMargins);
 
     return {
       success: true,
@@ -821,6 +839,252 @@ ipcMain.handle('export:json', async (event, pathData) => {
     return { success: false, error: error.message };
   }
 });
+
+// Font Samples Export - generates a 1-2 page document showing all fonts
+ipcMain.handle('export:fontSamples', async () => {
+  try {
+    // Get all available fonts (reuse existing logic)
+    const fonts = [];
+    const hersheyDir = path.join(FONTS_DIR, 'hershey-fonts');
+
+    // English/ASCII compatible Hershey fonts
+    const englishFonts = [
+      'cursive', 'futural', 'futuram', 'scripts', 'scriptc',
+      'rowmans', 'rowmant', 'rowmand',
+      'romans', 'romanp', 'romant', 'romanc', 'romand'
+    ];
+
+    if (fs.existsSync(hersheyDir)) {
+      const files = fs.readdirSync(hersheyDir);
+      files.forEach(file => {
+        if (file.endsWith('.jhf')) {
+          const name = path.basename(file, '.jhf');
+          if (englishFonts.includes(name)) {
+            fonts.push({
+              name: name,
+              displayName: formatFontName(name),
+              path: path.join(hersheyDir, file),
+              type: 'hershey'
+            });
+          }
+        }
+      });
+    }
+
+    // Relief SingleLine fonts
+    const reliefDir = path.join(__dirname, '../resources/fonts/relief');
+    if (fs.existsSync(reliefDir)) {
+      fs.readdirSync(reliefDir).forEach(file => {
+        if (file.endsWith('.svg') && !file.includes('Ornament')) {
+          fonts.push({
+            name: path.basename(file, '.svg'),
+            displayName: 'Relief SingleLine',
+            path: path.join(reliefDir, file),
+            type: 'svg'
+          });
+        }
+      });
+    }
+
+    // EMS single-line fonts (remove EMS prefix for shorter labels)
+    const emsDir = path.join(__dirname, '../resources/fonts/ems');
+    if (fs.existsSync(emsDir)) {
+      fs.readdirSync(emsDir).forEach(file => {
+        if (file.endsWith('.svg')) {
+          fonts.push({
+            name: path.basename(file, '.svg'),
+            displayName: path.basename(file, '.svg').replace('EMS', ''),
+            path: path.join(emsDir, file),
+            type: 'svg'
+          });
+        }
+      });
+    }
+
+    // Hershey SVG fonts (shorten Hershey to H-)
+    const hersheySvgDir = path.join(__dirname, '../resources/fonts/hershey-svg');
+    if (fs.existsSync(hersheySvgDir)) {
+      fs.readdirSync(hersheySvgDir).forEach(file => {
+        if (file.endsWith('.svg')) {
+          const name = path.basename(file, '.svg');
+          fonts.push({
+            name: name,
+            displayName: name.replace(/Hershey/g, 'H-'),
+            path: path.join(hersheySvgDir, file),
+            type: 'svg'
+          });
+        }
+      });
+    }
+
+    // Sort alphabetically by display name
+    fonts.sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+    // Generate the samples SVG
+    const svg = await generateFontSamplesSVG(fonts);
+
+    // Show save dialog
+    const result = await dialog.showSaveDialog(mainWindow, {
+      defaultPath: 'font-samples.svg',
+      filters: [{ name: 'SVG Files', extensions: ['svg'] }]
+    });
+
+    if (!result.canceled) {
+      fs.writeFileSync(result.filePath, svg, 'utf-8');
+      return { success: true, path: result.filePath, fontCount: fonts.length };
+    }
+    return { success: false, error: 'Export cancelled' };
+  } catch (error) {
+    console.error('Font samples export error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// Generate font samples SVG document - single page, 3-column layout, plotter-ready
+async function generateFontSamplesSVG(fonts) {
+  // US Letter: 8.5 x 11 inches at 96 DPI
+  const pageWidth = 8.5 * 96;  // 816px
+  const pageHeight = 11 * 96;  // 1056px
+  const margin = 0.25 * 96;    // 24px margins
+
+  // Load EMS Delight for rendering labels as paths (plotter-ready)
+  const labelFontPath = path.join(__dirname, '../resources/fonts/ems/EMSDelight.svg');
+  const labelFontContent = fs.readFileSync(labelFontPath, 'utf-8');
+  const labelFont = parseSVGFont(labelFontContent);
+
+  // 3-column layout
+  const numColumns = 3;
+  const columnWidth = (pageWidth - margin * 2) / numColumns;
+  const columnGap = 8;
+
+  // Calculate rows needed per column
+  const titleHeight = 20;
+  const fontsPerColumn = Math.ceil(fonts.length / numColumns);
+  const availableHeight = pageHeight - (margin * 2) - titleHeight;
+  const rowHeight = Math.floor(availableHeight / fontsPerColumn);
+
+  // Font sizes - make room for pangram
+  const labelFontSize = 7;
+  const sampleFontSize = Math.min(12, Math.floor(rowHeight * 0.45));
+
+  // Pangram sample text
+  const sampleText = 'Sphinx of black quartz, judge my vow';
+
+  let svgContent = '';
+
+  // Title rendered in EMS Delight
+  svgContent += renderTextAsPath(labelFont, `Font Samples (${fonts.length})`, 12, margin, margin + 10);
+
+  // Render fonts in 3 columns
+  for (let i = 0; i < fonts.length; i++) {
+    const font = fonts[i];
+    const column = Math.floor(i / fontsPerColumn);
+    const rowInColumn = i % fontsPerColumn;
+
+    const colX = margin + (column * columnWidth) + (column > 0 ? columnGap : 0);
+    const currentY = margin + titleHeight + (rowInColumn * rowHeight) + rowHeight * 0.6;
+
+    // Render font label using EMS Delight
+    const labelText = font.displayName.substring(0, 14);
+    svgContent += renderTextAsPath(labelFont, labelText, labelFontSize, colX, currentY - rowHeight * 0.35);
+
+    // Render pangram sample in the actual font
+    try {
+      const samplePaths = await renderFontSample(font, sampleText, sampleFontSize, colX, currentY);
+      svgContent += samplePaths;
+    } catch (err) {
+      // Skip fonts that fail to render
+    }
+  }
+
+  // Build final SVG - exactly one US Letter page
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     viewBox="0 0 ${pageWidth} ${pageHeight}"
+     width="8.5in" height="11in">
+  <style>
+    path { fill: none; stroke: black; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+  </style>
+${svgContent}</svg>`;
+
+  return svg;
+}
+
+// Render text as SVG paths using an SVG font (for plotter output)
+function renderTextAsPath(fontData, text, fontSize, startX, startY) {
+  const scale = fontSize / fontData.unitsPerEm;
+  let paths = '';
+  let x = startX;
+
+  for (const char of text) {
+    const charCode = char.charCodeAt(0);
+    const glyph = fontData.glyphs[charCode];
+
+    if (glyph && glyph.pathData) {
+      paths += `  <path d="${glyph.pathData}" transform="translate(${x}, ${startY}) scale(${scale}, ${-scale})"/>\n`;
+      x += glyph.advanceWidth * scale;
+    } else if (char === ' ') {
+      x += fontData.defaultWidth * scale;
+    }
+  }
+
+  return paths;
+}
+
+// Render a font sample and return SVG path elements
+async function renderFontSample(font, text, fontSize, startX, startY) {
+  const ext = path.extname(font.path).toLowerCase();
+  let paths = '';
+  let x = startX;
+
+  if (ext === '.jhf' || font.type === 'hershey') {
+    // Hershey font - glyphs are centered around origin with negative X on left
+    const content = fs.readFileSync(font.path, 'utf-8');
+    const glyphs = parseJHF(content);
+    const scale = fontSize / 25;
+    const charWidth = fontSize * 0.6;
+    // Hershey glyphs typically span from about -8 to +8 in X, so offset by ~8 units * scale
+    const xOffset = 8 * scale;
+
+    for (const char of text) {
+      const charCode = char.charCodeAt(0);
+      const pathData = glyphs[charCode];
+
+      if (pathData) {
+        // Adjust X to account for negative glyph coordinates, Y for baseline
+        const yOffset = startY - fontSize * 0.2;
+        paths += `  <path d="${pathData}" transform="translate(${x + xOffset}, ${yOffset}) scale(${scale})"/>\n`;
+        x += charWidth;
+      } else if (char === ' ') {
+        x += charWidth * 0.6;
+      }
+    }
+  } else if (ext === '.svg' || font.type === 'svg') {
+    // SVG font
+    const content = fs.readFileSync(font.path, 'utf-8');
+    const fontData = parseSVGFont(content);
+    const scale = fontSize / fontData.unitsPerEm;
+    // SVG fonts have Y-up coordinate system. When we flip Y, we need to translate
+    // to account for the ascent (glyphs are drawn above the baseline)
+    const ascent = fontData.ascent || 800;
+
+    for (const char of text) {
+      const charCode = char.charCodeAt(0);
+      const glyph = fontData.glyphs[charCode];
+
+      if (glyph && glyph.pathData) {
+        // Transform: move to baseline position, then scale with Y-flip
+        // The Y offset accounts for the ascent being flipped below the baseline
+        paths += `  <path d="${glyph.pathData}" transform="translate(${x}, ${startY}) scale(${scale}, ${-scale})"/>\n`;
+        x += glyph.advanceWidth * scale;
+      } else if (char === ' ') {
+        x += fontData.defaultWidth * scale;
+      }
+    }
+  }
+
+  return paths;
+}
 
 // Image upload handler
 ipcMain.handle('image:select', async () => {
@@ -932,8 +1196,13 @@ ipcMain.handle('export:jpg', async (event, dataUrl) => {
   }
 });
 
-function generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, lineCount = 1, lineHeight = 0, strokeWidth = 2) {
-  const padding = 20;
+function generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, lineCount = 1, lineHeight = 0, strokeWidth = 2, pageMargins = { top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 }) {
+  // Convert margins from inches to pixels (96 DPI)
+  const marginTop = pageMargins.top * 96;
+  const marginRight = pageMargins.right * 96;
+  const marginBottom = pageMargins.bottom * 96;
+  const marginLeft = pageMargins.left * 96;
+  const padding = 20; // fallback for fit-to-content mode
 
   // For SVG fonts, we need to:
   // 1. Work in font coordinate space (unitsPerEm)
@@ -972,12 +1241,16 @@ function generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, 
   }
 
   // Use inches for width/height so Cricut/plotters interpret size correctly
+  // Use margins for page mode, padding for fit-to-content mode
+  const translateX = pageDimensions ? marginLeft : padding;
+  const translateY = (pageDimensions ? marginTop : padding) + ascent * scale;
+
   let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${viewBoxWidth} ${viewBoxHeight}" width="${widthInches}in" height="${heightInches}in">
   <style>
     path { fill: none; stroke: black; stroke-width: ${strokeWidth}; stroke-linecap: round; stroke-linejoin: round; }
   </style>
-  <g transform="translate(${padding}, ${padding + ascent * scale}) scale(${scale}, ${-scale})">
+  <g transform="translate(${translateX}, ${translateY}) scale(${scale}, ${-scale})">
 `;
 
   // Position each character in font coordinate space
@@ -997,8 +1270,13 @@ function generateSVGFontSVG(paths, fontSize, scale, unitsPerEm, pageDimensions, 
   return svg;
 }
 
-function generateHersheySVG(paths, fontSize, totalWidth, pageDimensions, lineCount = 1, lineHeight = 0, strokeWidth = 1) {
-  const padding = 20;
+function generateHersheySVG(paths, fontSize, totalWidth, pageDimensions, lineCount = 1, lineHeight = 0, strokeWidth = 1, pageMargins = { top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 }) {
+  // Convert margins from inches to pixels (96 DPI)
+  const marginTop = pageMargins.top * 96;
+  const marginRight = pageMargins.right * 96;
+  const marginBottom = pageMargins.bottom * 96;
+  const marginLeft = pageMargins.left * 96;
+  const padding = 20; // fallback for fit-to-content mode
   const scale = fontSize / 25; // Hershey fonts are ~25 units tall
 
   // Calculate actual bounds of all glyphs to handle negative coordinates
@@ -1047,12 +1325,16 @@ function generateHersheySVG(paths, fontSize, totalWidth, pageDimensions, lineCou
   }
 
   // Use inches for width/height so Cricut/plotters interpret size correctly
+  // Use margins for page mode, padding for fit-to-content mode
+  const translateX = pageDimensions ? marginLeft : padding;
+  const translateY = pageDimensions ? marginTop : padding;
+
   let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBoxX} ${viewBoxY} ${viewBoxWidth} ${viewBoxHeight}" width="${widthInches}in" height="${heightInches}in">
   <style>
     path { fill: none; stroke: black; stroke-width: ${strokeWidth}; stroke-linecap: round; stroke-linejoin: round; }
   </style>
-  <g transform="translate(${padding}, ${padding})">
+  <g transform="translate(${translateX}, ${translateY})">
 `;
 
   paths.forEach((path) => {
@@ -1066,8 +1348,13 @@ function generateHersheySVG(paths, fontSize, totalWidth, pageDimensions, lineCou
   return svg;
 }
 
-function generateSVG(paths, fontSize, totalWidth, pageDimensions, lineCount = 1, lineHeight = 0, strokeWidth = 1) {
-  const padding = 20;
+function generateSVG(paths, fontSize, totalWidth, pageDimensions, lineCount = 1, lineHeight = 0, strokeWidth = 1, pageMargins = { top: 0.5, right: 0.5, bottom: 0.5, left: 0.5 }) {
+  // Convert margins from inches to pixels (96 DPI)
+  const marginTop = pageMargins.top * 96;
+  const marginRight = pageMargins.right * 96;
+  const marginBottom = pageMargins.bottom * 96;
+  const marginLeft = pageMargins.left * 96;
+  const padding = 20; // fallback for fit-to-content mode
 
   // Use page dimensions if provided, otherwise fit to content
   let width, height;
@@ -1084,12 +1371,16 @@ function generateSVG(paths, fontSize, totalWidth, pageDimensions, lineCount = 1,
     heightInches = height / 96;
   }
 
+  // Use margins for page mode, padding for fit-to-content mode
+  const translateX = pageDimensions ? marginLeft : padding;
+  const translateY = pageDimensions ? marginTop : padding;
+
   let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${widthInches}in" height="${heightInches}in">
   <style>
     path { fill: none; stroke: black; stroke-width: ${strokeWidth}; stroke-linecap: round; stroke-linejoin: round; }
   </style>
-  <g transform="translate(${padding}, ${padding})">
+  <g transform="translate(${translateX}, ${translateY})">
 `;
 
   paths.forEach((pathData, i) => {

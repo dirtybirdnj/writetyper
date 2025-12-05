@@ -19,5 +19,7 @@ contextBridge.exposeInMainWorld('api', {
   onMenuFontMenu: (callback) => ipcRenderer.on('menu:font-menu', callback),
   onMenuExportSVG: (callback) => ipcRenderer.on('menu:export-svg', callback),
   onMenuExportPNG: (callback) => ipcRenderer.on('menu:export-png', callback),
-  onMenuExportJPG: (callback) => ipcRenderer.on('menu:export-jpg', callback)
+  onMenuExportJPG: (callback) => ipcRenderer.on('menu:export-jpg', callback),
+  onMenuExportFontSamples: (callback) => ipcRenderer.on('menu:export-font-samples', callback),
+  exportFontSamples: () => ipcRenderer.invoke('export:fontSamples')
 });
