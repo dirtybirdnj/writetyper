@@ -1,0 +1,10 @@
+# Ignore LLM context files - these are for local models (Qwen, Ollama, DeepSeek)
+# Claude should only read these when explicitly asked
+llm-context/
+
+# Standard ignores
+node_modules/
+dist/
+out/
+.vite/
+*.log
